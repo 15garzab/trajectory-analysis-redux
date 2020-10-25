@@ -117,10 +117,10 @@ class TrajStats():
         for i in range(len(self.atomsvstime[0,:,0])):
             # average first and last 100 frames for accurate position
             # parsplice trajectories are much smoother, so only 10 frames
-            if parsplice == False:
+            if self.parsplice == False:
                 final = np.average(self.atomsvstime[-200:,i,2])
                 initial = np.average(self.atomsvstime[:200,i,2])
-            elif parpslice == True:
+            elif self.parpslice == True:
                 final = np.average(self.atomsvstime[-10:,i,2])
                 initial = np.average(self.atomsvstime[:10,i,2])
             # below the centerline, segregation is an increase
