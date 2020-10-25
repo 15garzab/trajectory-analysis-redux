@@ -35,7 +35,7 @@ class TrajStats():
     """
 
 
-    def __init__(self, filename, atomid, vacid, r = 3.0):
+    def __init__(self, filename, atomid, vacid, r = 3.0, parsplice = False):
         """
         Parameters
         ----------
@@ -48,6 +48,7 @@ class TrajStats():
         self.filename = filename
         self.atomid = atomid
         self.vacid = vacid
+        self.parsplice = parsplice
         self.pipeline = import_file(self.filename, sort_particles = True)
         self.timesteps = self.pipeline.source.num_frames
         data = self.pipeline.compute(0)
@@ -109,29 +110,34 @@ class TrajStats():
         for col in self.vaccols:
             self.vacvariances[col] = self.vacdf.var()[col]
 
-    def flux(self):
+    def calc_flux(self):
         self.centerline = self.cell[2,2]/2
-        segregated = []
+        self.segregated = []
         segregated = []
         for i in range(len(self.atomsvstime[0,:,0])):
             # average first and last 100 frames for accurate position
-            final = np.average(self.atomsvstime[-100:,i,2])
-            initial = np.average(self.atomsvstime[:100,i,2])
+            # parsplice trajectories are much smoother, so only 10 frames
+            if parsplice == False:
+                final = np.average(self.atomsvstime[-200:,i,2])
+                initial = np.average(self.atomsvstime[:200,i,2])
+            elif parpslice == True:
+                final = np.average(self.atomsvstime[-10:,i,2])
+                initial = np.average(self.atomsvstime[:10,i,2])
             # below the centerline, segregation is an increase
             if initial < self.centerline:
-                if initial < final:
-                    segregated.append(i)
+                if final - initial > self.r/2:
+                    self.segregated.append(i)
             # above the centerline, segregation is a decrease
             elif initial > self.centerline:
-                if initial > final:
-                    segregated.append(i)
+                if initial - final > self.r/2:
+                    self.segregated.append(i)
 
-        nseg = len(segregated)
+        nseg = len(self.segregated)
         # atomic flux in atoms/ang^2/ps (2 ps per 1000 frames and 2A on the slab)
         flux = nseg/(2*self.cell[0,0]*self.cell[1,1])/(2*self.timesteps)
         # molar flux in mol/m2/s
         flux = flux/(1e-20)/(6.02e23)/(1e-12)
-        return flux
+        return self.flux
 
     # keep variances above 0.1 threshold
     def keeping(self, threshold):
