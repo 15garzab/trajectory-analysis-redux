@@ -83,7 +83,7 @@ class TrajStats():
         # a list comprehension with the above logic
         try:
             self.vacsvstime = np.array([self.vactrajs[frame][:,1:] if self.vactrajs[frame][:,1:].shape == (self.nvacs,3)
-                               else self.vactrajs[frame-1][:,1:]
+                               else self.vactrajs[frame-1][:self.nvacs,1:]
                                for frame in self.vactrajs.keys()])
         except:
             print("Vacancy count fluctuates significantly in OVITO WS-tracking, please inspect trajectory file")
