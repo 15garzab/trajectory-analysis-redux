@@ -35,7 +35,7 @@ class TrajStats():
     """
 
 
-    def __init__(self, filename, atomid, vacid, r = 3.0, parsplice = False):
+    def __init__(self, filename, atomid, rich_atomid, vacid, r = 3.0, parsplice = False):
         """
         Parameters
         ----------
@@ -47,6 +47,7 @@ class TrajStats():
         """
         self.filename = filename
         self.atomid = atomid
+        self.rich_atomid = rich_atomid
         self.vacid = vacid
         self.parsplice = parsplice
         self.pipeline = import_file(self.filename, sort_particles = True)
@@ -72,10 +73,13 @@ class TrajStats():
             # naive vacancy tracking, probably isnt reliable and needs to be refined with pymatgen loop next
             self.vactrajs[frame_index] = self.trajs[frame_index][np.ma.where(self.trajs[frame_index][:,0] == self.vacid)]
             self.atomtrajs[frame_index] = self.trajs[frame_index][np.ma.where(self.trajs[frame_index][:,0] == self.atomid)]
+            self.rich_atomtrajs[frame_index] = self.trajs[frame_index][.np.ma.where(self.trajs[frame_index][:,0] == self.rich_atomid)]
 
         # atoms of interest
         self.atomsvstime = np.array([self.atomtrajs[frame][:,1:] for frame in self.atomtrajs.keys()], dtype = float)
+        self.rich_atomsvstime = np.array([self.rich_atomtrajs[frame][:,1:] for frame in self.rich_atomtrajs.keys()], dtype = float)
         self.natoms = len(self.atomsvstime[0,:,0])
+        self.nrichatoms = len(self.rich_atomsvstime[0,:,0])
         # vacancies only (nvacs required to smooth nested sequence into the same shapes
         # in case there are 0 lattice vacancies in a frame, or some fluctuating number)
         # This fluctuation happens infrequently and can be fixed by propagating the previous frame
@@ -95,19 +99,29 @@ class TrajStats():
         for atom_id in ids:
             # z -coordinate only over time for each atom of interest
             self.df[atom_id] = self.atomsvstime[:, atom_id - 1, 2]
-        self.cols = list(self.df)
+        cols = list(self.df)
         # calculate variance of each particle's z-trajectory
         self.variances = {}
-        for col in self.cols:
+        for col in cols:
             self.variances[col] = self.df.var()[col]
+        # same process for the atom type in richer phase of the alloy
+        ids = [atom + 1 for atom in range(0,self.natoms)]
+        self.richdf = pd.DataFrame(index = range(0, self.pipeline.source.num_frames))
+        for atom_id in ids:
+            self.richdf[atom_id] = self.rich_atomsvstime[:, atom_d - 1, 2]
+
+        cols = list(self.richdf)
+        self.richvariances = {}
+        for col in cols:
+            self.richvariances[col] = self.richdf.var()[col]
         # same process for the vacancies in a dataframe
         ids = [vac + 1 for vac in range(0, self.nvacs)]
         self.vacdf = pd.DataFrame(index = range(0, self.pipeline.source.num_frames))
         for vac_id in ids:
             self.vacdf[vac_id] = self.vacsvstime[:, vac_id - 1, 2]
-        self.vaccols = list(self.vacdf)
+        cols = list(self.vacdf)
         self.vacvariances = {}
-        for col in self.vaccols:
+        for col in cols:
             self.vacvariances[col] = self.vacdf.var()[col]
 
     def Naiveflux(self):
