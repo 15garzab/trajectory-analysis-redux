@@ -110,11 +110,7 @@ class TrajStats():
         for col in self.vaccols:
             self.vacvariances[col] = self.vacdf.var()[col]
 
-<<<<<<< Updated upstream
-    def calc_flux(self):
-=======
     def Naiveflux(self):
->>>>>>> Stashed changes
         self.centerline = self.cell[2,2]/2
         self.segregated = []
         segregated = []
