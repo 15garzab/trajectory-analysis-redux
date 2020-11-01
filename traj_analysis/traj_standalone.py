@@ -110,7 +110,7 @@ class TrajStats():
         for col in self.vaccols:
             self.vacvariances[col] = self.vacdf.var()[col]
 
-    def calc_flux(self):
+    def Naiveflux(self):
         self.centerline = self.cell[2,2]/2
         self.segregated = []
         segregated = []
@@ -139,6 +139,12 @@ class TrajStats():
         self.flux = self.flux/(1e-20)/(6.02e23)/(1e-12)
         return self.flux
 
+    def MBflux(self, delta_t, nsamples = 20):
+        self.delta_t = delta_t
+        self.binsize = int(self.timesteps/self.nsamples)
+        for frame in range(self.binsize, self.timesteps + self.binsize, self.binsize):
+                frame = np.zeros((1,1), dtype = int)
+        return None
     # keep variances above 0.1 threshold
     def keeping(self, threshold):
         self.keeps = {}
