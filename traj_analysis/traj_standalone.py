@@ -53,7 +53,9 @@ def calc_onsagers(disp_list_1, disp_list_2, delta_t, nsamples):
     onsager_std[1,0] = onsager_std[0,1]
     onsager_std[0,0] = np.std(np.square([np.sum(disp_list_1[i]) for i in range(nsamples)]))/(delta_t*nsamples)/ntotatoms/6
     onsager_std[1,1] = np.std(np.square([np.sum(disp_list_2[i]) for i in range(nsamples)]))/(delta_t*nsamples)/ntotatoms/6
-    return (onsager, onsager_std)
+    # now convert values from angstroms^2/picosecond to m^2/s
+    scale = 1e-8 # m^2/s in 1 ang^2/ ps
+    return (onsager*scale, onsager_std*scale)
 
 def calc_directional_onsagers(disp_list_1, disp_list_2, delta_t, nsamples):
     """ Calculate onsager coefficients for a binary alloy to yield
@@ -106,8 +108,10 @@ def calc_directional_onsagers(disp_list_1, disp_list_2, delta_t, nsamples):
     onsager_std_zz[1,1] = np.std(np.square([np.sum(disp_list_2[i][:,2]) for i in range(nsamples)]))/(delta_t*nsamples)/ntotatoms/6
     onsager_std_zz[0,1] = np.std(np.multiply([np.sum(disp_list_1[i][:,2]) for i in range(nsamples)], [np.sum(disp_list_2[i][:,2]) for i in range(nsamples)]))/(delta_t*nsamples)/ntotatoms/6
     onsager_std_zz[1,0] = onsager_std_zz[0,1]
-    onsager = [onsager_xx, onsager_yy, onsager_zz]
-    onsager_std = [onsager_std_xx, onsager_std_yy, onsager_std_zz]
+    # now convert values from angstroms^2/picosecond to m^2/s
+    scale = 1e-8 # m^2/s in 1 ang^2/ ps
+    onsager = [entry*scale for entry in [onsager_xx, onsager_yy, onsager_zz]]
+    onsager_std = [entry*scale for entry in [onsager_std_xx, onsager_std_yy, onsager_std_zz]]
     return onsager, onsager_std
 
 # general function for pandas dataframe cross-correlation with lag
@@ -321,9 +325,11 @@ class TrajStats():
         # using the vector magnitudes in each direction to calculate a tensor if requested
         if directional == True:
             self.onsager_direct, self.onsager_direct_std = calc_directional_onsagers(self.rich_vector_lengths, self.vector_lengths, self.delta_t, self.nsamples)
+            # diagonal elements of diffusion matrix
             self.diff_xx = (X_dilute/X_rich)*self.onsager_direct[0][0,0] + (X_rich/X_dilute)*self.onsager_direct[0][1,1] - 2*self.onsager_direct[0][0,1]
             self.diff_yy = (X_dilute/X_rich)*self.onsager_direct[1][0,0] + (X_rich/X_dilute)*self.onsager_direct[1][1,1] - 2*self.onsager_direct[1][0,1]
             self.diff_zz = (X_dilute/X_rich)*self.onsager_direct[2][0,0] + (X_rich/X_dilute)*self.onsager_direct[2][1,1] - 2*self.onsager_direct[2][0,1]
+            # magnitude of these
             self.diff_directional = np.sqrt(self.diff_xx**2 + self.diff_yy**2 + self.diff_zz**2)
         return self.diffusivity
     # keep variances above 0.1 threshold
