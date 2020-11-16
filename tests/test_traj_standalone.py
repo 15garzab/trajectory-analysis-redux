@@ -1,11 +1,9 @@
 import pytest
-import unittest
 from pytest import approx
 import importlib.resources
-from operator import itemgetter
 import numpy as np
 import traj_analysis
-from traj_analysis.traj_standalone import TrajStats
+from traj_analysis import TrajStats
 
 # pytest will read the setup and teardown methods to structure a class-specific
 # test environment, instantiating TrajStats only one time and checking outputs
@@ -14,11 +12,12 @@ class TestClassTrajStats():
 # within the package directories. This first setup method is only called once
 # per class and will instantiate TrajStats with the data in 'test.xyz'.
     def setup_class(self):
+        rich_atomid = 1
         atomid = 2
         vacid = 3
         try:
             with importlib.resources.path(traj_analysis, 'test.xyz') as p:
-                self.test = traj_analysis.TrajStats(str(p), atomid, vacid)
+                self.test = traj_analysis.TrajStats(str(p), atomid, rich_atomid, vacid)
         except:
             print("Did you put 'test.xyz' inside the package install folder 'traj_analysis'?\n")
             print("All tests require this file to initialize a class (in a test fixture function).\n")
