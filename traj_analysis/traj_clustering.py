@@ -62,6 +62,7 @@ class ClusterStats():
             # atomid
             axs[2].plot(self.total_pdf[:,0], self.total_pdf[:,5])
             axs[2].set_title(dilute + '-' + dilute + ' bond')
+        # in case the order is swapped
         elif self.atomid == 1 and self.rich_atomid == 2:
             # atomid first in this case
             axs[0].plot(self.total_pdf[:,0], self.total_pdf[:,1])
@@ -86,30 +87,29 @@ class ClusterStats():
     def plot_vacrdfs(self, rich = 'Cu', dilute = 'Ni'):
         if self.vacid == 3:
             if self.rich_atomid == 1 and self.atomid == 2:
-                fig, axs = plt.subplots(1,3, sharex = True, sharey = True)
+                fig, axs = plt.subplots(1,3, sharex = True)
                 # rich_atomid
                 axs[0].plot(self.total_pdf[:,0], self.total_pdf[:,2])
                 axs[0].set_title(rich + '-' + 'vacancy distance')
                 # atomid
                 axs[1].plot(self.total_pdf[:,0], self.total_pdf[:,3])
                 axs[1].set_title(dilute + '-' + 'vacancy distance')
-                # Vacancy-vacancy distance
-                axs[2].plot(self.total_pdf[:,0], self.total_pdf[:,6])
-                axs[2].set_title('Vacancy-vacancy distance')
+            # in case the order is swapped
             elif self.atomid == 1 and self.rich_atomid == 2:
-                fig, axs = plt.subplots(1,3, sharex = True, sharey = True)
+                fig, axs = plt.subplots(1,3, sharex = True)
                 # atomid
                 axs[0].plot(self.total_pdf[:,0], self.total_pdf[:,2])
                 axs[0].set_title(dilute + '-' + 'vacancy distance')
                 # rich_atomid
                 axs[1].plot(self.total_pdf[:,0], self.total_pdf[:,3])
                 axs[1].set_title(rich + '-' + 'vacancy distance')
-                # vacancy-vacancy
-                axs[2].plot(self.total_pdf[:,0], self.total_pdf[:,6])
-                axs[2].set_title('Vacancy-vacancy distance')
             else:
                 print('Error: Inconsistent particle type IDs')
                 sys.exit(1)
+            # vacancy-vacancy
+            axs[2].plot(self.total_pdf[:,0], self.total_pdf[:,6])
+            axs[2].set_title('Vacancy-vacancy distance')
+            fig.tight_layout()
         else:
             print("Error: Vacid must be equal to 3")
             sys.exit(1)
@@ -117,18 +117,29 @@ class ClusterStats():
     # report local maxima in the RDFs
     def bond_averages(self):
         # scipy function for the local maxima in the distribution
-        # check if point is greater than 30 points in either direction
+        # check if value is greater than 30 entries in either direction (order)
         # heterobond
-        self.het_maxima = self.total_pdf[:,0][argrelextrema(self.total_pdf[:,4], np.greater, order = 30)[0]]
-        if self.rich_atomid == 1 and self.atomid == 2:
-
-            self.rich_maxima = self.total_pdf[:,0][argrelextrema(self.total_pdf[:,1], np.greater, order = 30)[0]]
-            self.maxima = self.total_pdf[:,0][argrelextrema(self.total_pdf[:,5], np.greater, order = 30)[0]]
-        elif self.atomid == 1 and self.rich_atomid == 2:
-            self.maxima = self.total_pdf[:,0][argrelextrema(self.total_pdf[:,1], np.greater,  order = 30)[0]]
-            self.rich_maxima = self.total_pdf[:,0][argrelextrema(self.total_pdf[:,5], np.greater, order = 30)[0]]
+        if self.vacid == 3:
+            self.het_maxima = self.total_pdf[:,0][argrelextrema(self.total_pdf[:,4], np.greater, order = 30)[0]]
+            if self.rich_atomid == 1 and self.atomid == 2:
+                # bonds
+                self.rich_maxima = self.total_pdf[:,0][argrelextrema(self.total_pdf[:,1], np.greater, order = 30)[0]]
+                self.maxima = self.total_pdf[:,0][argrelextrema(self.total_pdf[:,5], np.greater, order = 30)[0]]
+                # distances to vacancies
+                self.dilute_vac_maxima = self.total_pdf[:,0][argrelextrema(self.total_pdf[:,3], np.greater, order = 30)[0]]
+                self.rich_vac_maxima = self.total_pdf[:,0][argrelextrema(self.total_pdf[:,2], np.greater, order = 30)[0]]
+            # in case the order is swapped
+            elif self.atomid == 1 and self.rich_atomid == 2:
+                self.maxima = self.total_pdf[:,0][argrelextrema(self.total_pdf[:,1], np.greater,  order = 30)[0]]
+                self.rich_maxima = self.total_pdf[:,0][argrelextrema(self.total_pdf[:,5], np.greater, order = 30)[0]]
+                self.dilute_vac_maxima = self.total_pdf[:,0][argrelextrema(self.total_pdf[:,2], np.greater, order = 30)[0]]
+                self.rich_vac_maxima = self.total_pdf[:,0][argrelextrema(self.total_pdf[:,3], np.greater, order = 30)[0]]
+            else:
+                print("Error: Inconsistent particle type IDs")
+                sys.exit(1)
+            self.vac_vac_maxima = self.total_pdf[:,0][argrelextrema(self.total_pdf[:,6], np.greater, order = 30)[0]]
         else:
-            print("Error: Inconsistent particle type IDs")
+            print("Error: Vacid must be equal to 3")
             sys.exit(1)
 
         return [self.rich_maxima, self.het_maxima, self.maxima]
