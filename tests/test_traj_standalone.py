@@ -76,7 +76,7 @@ class TestClassTrajStats():
     # will need to change hard-coded number as this method develops
     def test_flux_calculation(self):
         correct_flux = 8430.904820655327
-        assert approx(self.test.flux(), abs = 1e-3) == correct_flux
+        assert approx(self.test.naiveflux(), abs = 1e-3) == correct_flux
 
     def test_keeping_high_variances(self):
         self.test.keeping(0.03)
