@@ -141,7 +141,7 @@ class TrajStats():
     """
 
 
-    def __init__(self, filename, atomid, rich_atomid, vacid, parsplice = False):
+    def __init__(self, filename, atomid, rich_atomid, vacid, r = 3.0, parsplice = False):
         """
         Parameters
         ----------
@@ -156,6 +156,7 @@ class TrajStats():
         self.atomid = atomid
         self.rich_atomid = rich_atomid
         self.vacid = vacid
+        self.r = r
         self.parsplice = parsplice
         self.pipeline = import_file(self.filename, sort_particles = True)
         self.timesteps = self.pipeline.source.num_frames
@@ -188,14 +189,12 @@ class TrajStats():
         self.ntotatoms = self.natoms + self.nrichatoms
         # vacancies only (nvacs required to smooth nested sequence into the same shapes
         # in case there are 0 lattice vacancies in a frame, or some fluctuating number)
-        # This fluctuation happens infrequently and can be fixed by propagating the previous frame
-        # forward in time starting from the initial count (in the very first frame of the trajectory)
-        self.nvacs = len(self.vactrajs[0][:,0])
+        # This fluctuation happens infrequently and can be fixed by finding the average number beforehand
+        self.nvacs = int(np.round(np.average([self.vactrajs[i].shape[0] for i in range(len(self.vactrajs))])))
         # a list comprehension with the above logic
         try:
-            self.vacsvstime = np.array([self.vactrajs[frame][:,1:] if self.vactrajs[frame][:,1:].shape == (self.nvacs,3)
-                               else self.vactrajs[frame-1][:self.nvacs,1:]
-                               for frame in self.vactrajs.keys()])
+            self.vacsvstime = np.array([self.vactrajs[frame][:self.nvacs,1:]
+                   for frame in self.vactrajs.keys()])
         except:
             print("Vacancy count fluctuates significantly in OVITO WS-tracking, please inspect trajectory file")
             sys.exit(1)#
@@ -241,16 +240,16 @@ class TrajStats():
             if self.parsplice == False:
                 final = np.average(self.atomsvstime[-200:,i,2])
                 initial = np.average(self.atomsvstime[:200,i,2])
-            elif self.parpslice == True:
+            elif self.parsplice == True:
                 final = np.average(self.atomsvstime[-10:,i,2])
                 initial = np.average(self.atomsvstime[:10,i,2])
             # below the centerline, segregation is an increase
             if initial < self.centerline:
-                if final - initial > self.r/2:
+                if final - initial > self.r/3:
                     self.segregated.append(i)
             # above the centerline, segregation is a decrease
             elif initial > self.centerline:
-                if initial - final > self.r/2:
+                if initial - final > self.r/3:
                     self.segregated.append(i)
         nseg = len(self.segregated)
         # atomic flux in atoms/ang^2/ps (2 ps per 1000 frames and 2A on the slab)
