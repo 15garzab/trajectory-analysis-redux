@@ -1,6 +1,7 @@
 import os
 import sys
 import random
+from operator import itemgetter
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -114,6 +115,41 @@ def calc_directional_onsagers(disp_list_1, disp_list_2, delta_t, nsamples):
     onsager_std = [entry*scale for entry in [onsager_std_xx, onsager_std_yy, onsager_std_zz]]
     return onsager, onsager_std
 
+# fastest numpy shift w/ NaN fill: preallocate empty array and assign slice by chrisaycock (StackOverflow)
+def shift(arr, num, fill_value=np.nan):
+    result = np.empty_like(arr)
+    if num > 0:
+        result[:num] = fill_value
+        result[num:] = arr[:-num]
+    elif num < 0:
+        result[num:] = fill_value
+        result[:num] = arr[-num:]
+    else:
+        result[:] = arr
+    return result
+
+# general function for pandas dataframe cross-correlation with lag
+def np_crosscorr(datax, datay, lag=0, wrap=False):
+    """ Lag-N cross correlation.
+    Shifted data filled with NaNs
+
+    Parameters
+    ----------
+    lag : int, default 0 
+    datax, datay : pandas.Series objects of equal length
+    Returns
+    ----------
+    crosscorr : float
+    """
+    datax = pd.Series(datax)
+    datay = pd.Series(datay)
+    if wrap:
+        shiftedy = datay.shift(lag)
+        shiftedy.iloc[:lag] = datay.iloc[-lag:].values
+        return datax.corr(shiftedy)
+    else:
+        return pd.to_numeric(datax.corr(datay.shift(lag)))
+
 # general function for pandas dataframe cross-correlation with lag
 def crosscorr(datax, datay, lag=0, wrap=False):
     """ Lag-N cross correlation.
@@ -121,7 +157,7 @@ def crosscorr(datax, datay, lag=0, wrap=False):
 
     Parameters
     ----------
-    lag : int, default 0
+    lag : int, default 0 
     datax, datay : pandas.Series objects of equal length
     Returns
     ----------
@@ -141,7 +177,7 @@ class TrajStats():
     """
 
 
-    def __init__(self, filename, atomid, rich_atomid, vacid, parsplice = False):
+    def __init__(self, filename, nvacs, atomid, rich_atomid, vacid, parsplice = False):
         """
         Parameters
         ----------
@@ -153,6 +189,7 @@ class TrajStats():
         ----------
         """
         self.filename = filename
+        self.nvacs = nvacs
         self.atomid = atomid
         self.rich_atomid = rich_atomid
         self.vacid = vacid
@@ -180,55 +217,40 @@ class TrajStats():
             self.atomtrajs[frame_index] = self.trajs[frame_index][np.ma.where(self.trajs[frame_index][:,0] == self.atomid)]
             self.rich_atomtrajs[frame_index] = self.trajs[frame_index][np.ma.where(self.trajs[frame_index][:,0] == self.rich_atomid)]
 
-        # atoms of interest
+        # atoms of interest xyz
         self.atomsvstime = np.array([self.atomtrajs[frame][:,1:] for frame in self.atomtrajs.keys()], dtype = float)
+        # polar coordinates of the dopant atoms
+        self.rvstime = np.sqrt(np.square(self.atomsvstime[:,:,0]) + np.square(self.atomsvstime[:,:,1]))
+        self.thetavstime = np.arccos(self.atomsvstime[:,:,0]/self.rvstime)
+        # solvent atoms xyz required too
         self.rich_atomsvstime = np.array([self.rich_atomtrajs[frame][:,1:] for frame in self.rich_atomtrajs.keys()], dtype = float)
+        # polar coords for the solvent atoms
+        self.rich_rvstime = np.sqrt(np.square(self.rich_atomsvstime[:,:,0]) + np.square(self.rich_atomsvstime[:,:,1]))
+        self.rich_thetavstime = np.arccos(self.rich_atomsvstime[:,:,0]/self.rich_rvstime)
         self.natoms = len(self.atomsvstime[0,:,0])
         self.nrichatoms = len(self.rich_atomsvstime[0,:,0])
         self.ntotatoms = self.natoms + self.nrichatoms
-        # vacancies only (nvacs required to smooth nested sequence into the same shapes
         # in case there are 0 lattice vacancies in a frame, or some fluctuating number)
         # This fluctuation happens infrequently and can be fixed by propagating the previous frame
         # forward in time starting from the initial count (in the very first frame of the trajectory)
-        self.nvacs = len(self.vactrajs[0][:,0])
+        #self.nvacs = int(np.round(np.average([self.vactrajs[i].shape[0] for i in range(len(self.vactrajs))])))
         # a list comprehension with the above logic
-        try:
-            self.vacsvstime = np.array([self.vactrajs[frame][:,1:] if self.vactrajs[frame][:,1:].shape == (self.nvacs,3)
-                               else self.vactrajs[frame-1][:self.nvacs,1:]
-                               for frame in self.vactrajs.keys()])
-        except:
-            print("Vacancy count fluctuates significantly in OVITO WS-tracking, please inspect trajectory file")
-            sys.exit(1)#
-        # put only the z-coordinate atomic data into a pandas dataframe
-        ids = [atom + 1 for atom in range(0, self.natoms)]
-        self.df = pd.DataFrame(index = range(0, self.pipeline.source.num_frames))
-        for atom_id in ids:
-            # z -coordinate only over time for each atom of interest
-            self.df[atom_id] = self.atomsvstime[:, atom_id - 1, 2]
-        cols = list(self.df)
+        if self.nvacs < 3:
+            try:
+                self.vacsvstime = np.array([self.vactrajs[frame][:self.nvacs,1:]
+                    for frame in self.vactrajs.keys()])
+            except:
+                print("Vacancy count fluctuates significantly in OVITO WS-tracking, please inspect trajectory file")
+                sys.exit(1)#
+        else:
+            pass
+        # polar coordinates for the vacancies
+        self.vacs_rvstime = np.sqrt(np.square(self.vacsvstime[:,:,0]) + np.square(self.vacsvstime[:,:,1]))
+        self.vacs_thetavstime = np.arccos(self.vacsvstime[:,:,0]/self.vacs_rvstime)
         # calculate variance of each particle's z-trajectory
-        self.variances = {}
-        for col in cols:
-            self.variances[col] = self.df.var()[col]
-        # same process for the atom type in richer phase of the alloy
-        ids = [atom + 1 for atom in range(0,self.natoms)]
-        self.richdf = pd.DataFrame(index = range(0, self.pipeline.source.num_frames))
-        for atom_id in ids:
-            self.richdf[atom_id] = self.rich_atomsvstime[:, atom_id - 1, 2]
-
-        cols = list(self.richdf)
-        self.richvariances = {}
-        for col in cols:
-            self.richvariances[col] = self.richdf.var()[col]
-        # same process for the vacancies in a dataframe
-        ids = [vac + 1 for vac in range(0, self.nvacs)]
-        self.vacdf = pd.DataFrame(index = range(0, self.pipeline.source.num_frames))
-        for vac_id in ids:
-            self.vacdf[vac_id] = self.vacsvstime[:, vac_id - 1, 2]
-        cols = list(self.vacdf)
-        self.vacvariances = {}
-        for col in cols:
-            self.vacvariances[col] = self.vacdf.var()[col]
+        self.variances = {atom_id: np.var(self.atomsvstime[:, atom_id, 2]) for atom_id in range(0,self.natoms)}
+        self.rich_variances = {atom_id: np.var(self.rich_atomsvstime[:, atom_id, 2]) for atom_id in range(0,self.nrichatoms)}
+        self.vacvariances = {vac_id: np.var(self.vacsvstime[:, vac_id, 2]) for vac_id in range(0,self.nvacs)}
 
     # personally designed flux measurement (very rough) for slab models w/ a centerline
     def naiveflux(self):
@@ -332,49 +354,44 @@ class TrajStats():
             # magnitude of these
             self.diff_directional = np.sqrt(self.diff_xx**2 + self.diff_yy**2 + self.diff_zz**2)
         return self.diffusivity
+    
+    def top_nvars(self,ntop):
+        res = dict(sorted(self.variances.items(), key = itemgetter(1), reverse = True)[:ntop])
+        print("The top " + str(ntop) + " variances for this trajectory are "  + str(res) + '\n')
+        return res
+
+    def top_nvacvars(self,ntop):
+        res = dict(sorted(self.vacvariances.items(), key = itemgetter(1), reverse = True)[:ntop])
+        print("The top " + str(ntop) + " variances for this trajectory are "  + str(res) + '\n')
+        return res
+
+    def top_nrichvars(self,ntop):
+        res = dict(sorted(self.rich_variances.items(), key = itemgetter(1), reverse = True)[:ntop])
+        print("The top " + str(ntop) + " variances for this trajectory are "  + str(res) + '\n')
+        return res
+
     # keep variances above 0.1 threshold
     def keeping(self, threshold):
         self.keeps = {}
         for key in self.variances.keys():
             # only relatively high variances are important
             if self.variances[key] > threshold:
-                self.keeps[key] = self.df[key]
+                self.keeps[key] = self.atomsvstime[:,key,2]
         return self.keeps
 
     def vackeeping(self,threshold):
         self.vackeeps = {}
         for key in self.vacvariances.keys():
             if self.vacvariances[key] > threshold:
-                self.vackeeps[key] = self.vacdf[key]
+                self.vackeeps[key] = self.vacsvstime[:,key,2]
         return self.vackeeps
 
-    # plot a sampling of the trajectories over time
-    def sample_ztraj(self, n):
-        samples = self.df.sample(n, axis = 1)
-        legend = []
-        for col in list(samples):
-            plt.plot(list(range(self.pipeline.source.num_frames)), self.df[col])
-            legend.append(col)
-
-        plt.legend(legend, loc = 'upper right')
-        plt.show()
-        return None
-
-    def sample_vacs_ztraj(self,n):
-        samples = self.vacdf.sample(n, axis = 1)
-        legend = []
-        for col in list(samples):
-            plt.plot(list(range(self.pipeline.source.num_frames)), self.df[col])
-            legend.append(col)
-        plt.legend(legend, loc = 'upper right')
-        plt.show()
-        return None
-
-    def plot_variances(self):
-        # initial z position on x axis and variance on y axis
-        plt.plot([self.df[col][0] for col in self.cols], list(self.variances.values()), 'o')
-        plt.show()
-        return None
+    def richkeeping(self,threshold):
+        self.richkeeps = {}
+        for key in self.rich_variances.keys():
+            if self.rich_variances[key] > threshold:
+                self.richkeeps[key] = self.rich_atomsvstime[:,key,2]
+        return self.richkeeps
 
     def thresh_variance(self):
         leg_list = []
@@ -383,7 +400,7 @@ class TrajStats():
             plt.plot(np.arange(1, self.pipeline.source.num_frames + 1), self.keeps[key])
             leg_list.append(key)
         plt.legend(leg_list, loc = 'upper right')
-        plt.title('Nickel Trajectories w/ High Variance')
+        plt.title('Solute Atom Trajectories w/ High Variance')
         plt.xlabel('Timestep')
         plt.ylabel('Z-Coordinate')
 
@@ -397,81 +414,69 @@ class TrajStats():
         plt.xlabel('Timestep')
         plt.ylabel('Z-Coordinate')
 
+    def thresh_richvariance(self):
+        leg_list = []
+        for key in self.richkeeps.keys():
+            plt.plot(np.arange(1, self.pipeline.source.num_frames + 1), self.richkeeps[key])
+            leg_list.append(key)
+        plt.legend(leg_list, loc ='upper right')
+        plt.title('Solvent Atom Trajectories w/ High Variance')
+        plt.xlabel('Timestep')
+        plt.ylabel('Z-Coordinate')
 
-    # raw cross correlation
-    def cross(self, atomid1, atomid2, differenced = False):
-        if differenced:
-            d1 = self.diffdf[atomid1]
-            d2 = self.diffdf[atomid2]
-        else:
-            d1 = self.df[atomid1]
-            d2 = self.df[atomid2]
-        seconds = 5
-        fps = 10
-        rs = [crosscorr(d1,d2, lag) for lag in range(-int(seconds*fps),int(seconds*fps+1))]
-        offset = np.ceil(len(rs)/2)-np.argmax(rs)
-        f,ax=plt.subplots(figsize=(14,3))
-        ax.plot(rs)
-        ax.axvline(np.ceil(len(rs)/2),color='k',linestyle='--',label='Center')
-        ax.axvline(np.argmax(rs),color='r',linestyle='--',label='Peak synchrony')
-        ax.set(title=f'Offset = {offset} frames\n Atom 1 leads <> Atom 2 leads', xlabel='Offset',ylabel='Pearson r')
-        ax.set_xticks([0, 25, 50, 75, 100])
-        ax.set_xticklabels([-50, -25, 0, 25, 50])
-        plt.legend()
-        plt.show()
-        return None
-
-    # Windowed, time-lagged cross correlation
-    def windowedcross(self, atomid1, atomid2, differenced = False):
-        no_splits = 20
-        samples_per_split = thousand.df.shape[0]/no_splits
-        rss=[]
-        seconds = 5
-        fps = 10
-        if differenced:
-            for t in range(0, no_splits):
-                d1 = self.diffdf[atomid1].loc[(t)*samples_per_split:(t+1)*samples_per_split]
-                d2 = self.diffdf[atomid2].loc[(t)*samples_per_split:(t+1)*samples_per_split]
-                rs = [crosscorr(d1,d2, lag) for lag in range(-int(seconds*fps),int(seconds*fps+1))]
-                rss.append(rs)
-        else:
-            for t in range(0, no_splits):
-                d1 = self.df[atomid1].loc[(t)*samples_per_split:(t+1)*samples_per_split]
-                d2 = self.df[atomid2].loc[(t)*samples_per_split:(t+1)*samples_per_split]
-                rs = [crosscorr(d1,d2, lag) for lag in range(-int(seconds*fps),int(seconds*fps+1))]
-                rss.append(rs)
-        rss = pd.DataFrame(rss)
-        f,ax = plt.subplots()
-        sns.heatmap(rss,cmap='coolwarm',ax=ax)
-        ax.set(title=f'Windowed Time-Lagged Cross Correlation',xlabel='Offset',ylabel='Window epochs')
-        #ax.set_xlim(85, 215)
-        ax.set_xticks([0, 25, 50, 75, 100])
-        ax.set_xticklabels([-50, -25, 0, 25, 50])
-        plt.show()
+    def analysis_routine(self, ntop):
+        # print the top ten particles in order of highest to lowest variance
+        top_nvars = self.top_nvars(ntop=ntop)
+        top_nvacvars = self.top_nvacvars(ntop=ntop)
+        top_nrichvars = self.top_nrichvars(ntop=ntop)
+        # keep these trajectories for plotting 
+        self.keeping(min(top_nvars.values()) - (10**-8))
+        self.vackeeping(min(top_nvacvars.values()) - (10**-8))
+        self.richkeeping(min(top_nrichvars.values()) - (10**-8))
+        # plot vacancies only
+        self.thresh_vacvariance()
         return None
 
     # Rolling window, time-lagged cross correlation
-    def rollingcross(self, atomid1, atomid2, differenced = False):
+    def rollingcross(self, atomid1, atomid2, coord, start=0, subtract=0, rich = False, differenced = False):
+        # coord takes values {0: r, 1: theta, 2: z} 
         seconds = 5
         fps = 10
         window_size = 300 #samples, should be a pretty high number compared to fps*sec to get good rolling averages
-        t_start = 0
+        t_start = start
         t_end = t_start + window_size
         step_size = 20
         rss=[]
-        while t_end < self.pipeline.source.num_frames:
-            if differenced:
-                d1 = self.diffdf[atomid1].iloc[t_start:t_end]
-                d2 = self.diffdf[atomid2].iloc[t_start:t_end]
+        while t_end < self.pipeline.source.num_frames-subtract:
+            if rich == False:
+                if coord == 2:
+                    d1 = self.atomsvstime[t_start:t_end, atomid1, coord]
+                    d2 = self.atomsvstime[t_start:t_end, atomid2, coord]
+                elif coord == 0:
+                    d1 = self.rvstime[t_start:t_end, atomid1]
+                    d2 = self.rvstime[t_start:t_end, atomid2]
+                elif coord == 1:
+                    d1 = self.thetavstime[t_start:t_end, atomid1]
+                    d2 = self.thetavstime[t_start:t_end, atomid2]
             else:
-                d1 = self.df[atomid1].iloc[t_start:t_end]
-                d2 = self.df[atomid2].iloc[t_start:t_end]
-            rs = [crosscorr(d1,d2, lag, wrap=False) for lag in range(-int(seconds*fps),int(seconds*fps+1))]
+                if coord == 2:
+                    d1 = self.atomsvstime[t_start:t_end, atomid1, coord]
+                    d2 = self.rich_atomsvstime[t_start:t_end, atomid2, coord]
+                elif coord == 0:
+                    d1 = self.rvstime[t_start:t_end, atomid1]
+                    d2 = self.rich_rvstime[t_start:t_end, atomid2]
+                elif coord == 1:
+                    d1 = self.thetavstime[t_start:t_end, atomid1]
+                    d2 = self.rich_thetavstime[t_start:t_end, atomid2]
+            rs = [np_crosscorr(d1,d2, lag, wrap=False) for lag in range(-int(seconds*fps),int(seconds*fps+1))]
             rss.append(rs)
             t_start = t_start + step_size
             t_end = t_end + step_size
-        rss = pd.DataFrame(rss)
-
+        rss = np.stack(rss)
+        # any NaN values are converted to one (implying a 1:1 match i.e. no difference)
+        rss = np.nan_to_num(rss, nan=1)
+        # remove extra dim
+        rss = np.squeeze(rss)
         f,ax = plt.subplots()
         sns.heatmap(rss,cmap='coolwarm',ax=ax)
         ax.set(title=f'Rolling-Window Time-Lagged Cross Correlation', xlabel='Offset',ylabel='Epochs')
@@ -481,27 +486,43 @@ class TrajStats():
         return None
 
         # Rolling window, time-lagged cross correlation for dataframes in different classes
-    def rollingcrossvacs(atomid1, atomid2, differenced = False):
+    def rollingcrossvacs(self, atomid1, atomid2, coord, start=0, subtract=0, rich = False, differenced = False):
         seconds = 5
         fps = 10
         window_size = 300 #samples, should be a pretty high number compared to fps*sec to get good rolling averages
-        t_start = 0
+        t_start = start
         t_end = t_start + window_size
         step_size = 20
         rss=[]
-        while t_end < self.pipeline.source.num_frames:
-            if differenced:
-                d1 = self.diffdf[atomid1].iloc[t_start:t_end]
-                d2 = self.vacdiffdf[atomid2].iloc[t_start:t_end]
+        # remove the final x amount of frames
+        while t_end < self.pipeline.source.num_frames-subtract:
+            if rich == False:
+                if coord == 2:
+                    d1 = self.atomsvstime[t_start:t_end, atomid1, coord]
+                    d2 = self.vacsvstime[t_start:t_end, atomid2, coord]
+                elif coord == 0:
+                    d1 = self.rvstime[t_start:t_end, atomid1]
+                    d2 = self.vacs_rvstime[t_start:t_end, atomid2]
+                elif coord == 1:
+                    d1 = self.thetavstime[t_start:t_end, atomid1]
+                    d2 = self.vacs_thetavstime[t_start:t_end, atomid2]
             else:
-                d1 = self.df[atomid1].iloc[t_start:t_end]
-                d2 = self.vacdf[atomid2].iloc[t_start:t_end]
-            rs = [crosscorr(d1,d2, lag, wrap=False) for lag in range(-int(seconds*fps),int(seconds*fps+1))]
+                if coord == 2:
+                    d1 = self.rich_atomsvstime[t_start:t_end, atomid1, coord]
+                    d2 = self.vacsvstime[t_start:t_end, atomid2, coord]
+                elif coord == 0:
+                    d1 = self.rich_rvstime[t_start:t_end, atomid1]
+                    d2 = self.vacs_rvstime[t_start:t_end, atomid2]
+                elif coord == 1:
+                    d1 = self.rich_thetavstime[t_start:t_end, atomid1]
+                    d2 = self.vacs_thetavstime[t_start:t_end, atomid2]
+            rs = [np_crosscorr(d1,d2, lag, wrap=False) for lag in range(-int(seconds*fps),int(seconds*fps+1))]
             rss.append(rs)
             t_start = t_start + step_size
             t_end = t_end + step_size
-        rss = pd.DataFrame(rss)
-
+        rss = np.stack(rss)
+        # any NaN values are converted to one (implying a 1:1 match i.e. no difference)
+        rss = np.nan_to_num(rss, nan=1)
         f,ax = plt.subplots()
         sns.heatmap(rss,cmap='coolwarm',ax=ax)
         ax.set(title=f'Rolling-Window Time-Lagged Cross Correlation', xlabel='Offset',ylabel='Epochs')
@@ -509,3 +530,42 @@ class TrajStats():
         ax.set_xticklabels([-50, -25, 0, 25, 50])
         plt.show()
         return None
+    
+    # comparing vacancy trajectories
+    def rollingcrossvac2vac(self, vacid1, vacid2, coord, start=0, subtract=0, differenced = False):
+        seconds = 5
+        fps = 10
+        window_size = 300 #samples, should be a pretty high number compared to fps*sec to get good rolling averages
+        t_start = start
+        t_end = t_start + window_size
+        step_size = 20
+        rss=[]
+        # remove the final x amount of frames
+        while t_end < self.pipeline.source.num_frames-subtract:
+            # z, vertical coordinate
+            if coord == 2:
+                d1 = self.vacsvstime[t_start:t_end, vacid1, coord]
+                d2 = self.vacsvstime[t_start:t_end, vacid2, coord]
+            # r, radial coordinate
+            elif coord == 0:
+                d1 = self.vacs_rvstime[t_start:t_end, vacid1]
+                d2 = self.vacs_rvstime[t_start:t_end, vacid2]
+            elif coord == 1:
+                d1 = self.vacs_thetavstime[t_start:t_end, vacid1]
+                d2 = self.vacs_thetavstime[t_start:t_end, vacid2]
+            rs = [np_crosscorr(d1,d2, lag, wrap=False) for lag in range(-int(seconds*fps),int(seconds*fps+1))]
+            rss.append(rs)
+            t_start = t_start + step_size
+            t_end = t_end + step_size
+        rss = np.stack(rss)
+        # any NaN values are converted to one (implying a 1:1 match i.e. no difference)
+        rss = np.nan_to_num(rss, nan=1)
+        f,ax = plt.subplots()
+        sns.heatmap(rss,cmap='coolwarm',ax=ax)
+        ax.set(title=f'Rolling-Window Time-Lagged Cross Correlation', xlabel='Offset',ylabel='Epochs')
+        ax.set_xticks([0, 25, 50, 75, 100])
+        ax.set_xticklabels([-50, -25, 0, 25, 50])
+        plt.show()
+        return None
+
+    #def mean_detection(self, atomid):
